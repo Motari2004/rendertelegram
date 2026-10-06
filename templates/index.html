@@ -199,6 +199,7 @@
             border-radius: 10px;
             cursor: pointer;
             font-weight: 600;
+            transition: background 0.2s;
         }
 
         .copy-btn:hover { background: #2f855a; }
@@ -223,7 +224,7 @@
             line-height: 1.5;
         }
 
-        /* Test panel specific */
+        /* Test panel */
         .test-panel {
             background: #f8fafc;
             border: 2px solid #e2e8f0;
@@ -300,14 +301,8 @@
             transition: all 0.2s;
         }
 
-        .btn-secondary:hover:not(:disabled) {
-            background: #ebf8ff;
-        }
-
-        .btn-secondary:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
+        .btn-secondary:hover:not(:disabled) { background: #ebf8ff; }
+        .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -319,7 +314,7 @@
         </div>
 
         <h1>Telegram Video Uploader</h1>
-        <p class="subtitle">Upload a video, get a link for Buffer &amp; Zernio</p>
+        <p class="subtitle">Upload a video, get a permanent link for Buffer &amp; Zernio</p>
 
         <div class="tabs">
             <button class="tab active" onclick="switchTab('upload', this)">📤 Upload</button>
@@ -372,8 +367,8 @@
                 </div>
 
                 <p class="hint">
-                    ⚠️ Press <strong>Publish Now</strong> in Buffer / Zernio while Render is awake.
-                    The video lives permanently in Telegram.
+                    ⚠️ This link is <strong>permanent</strong> — it fetches the video from Telegram
+                    on demand. Press <strong>Publish Now</strong> in Buffer / Zernio when ready.
                 </p>
             </div>
         </div>
@@ -381,7 +376,7 @@
         <!-- ============ TEST TAB ============ -->
         <div class="tab-content" id="tab-test">
             <div class="test-panel">
-                <h3>🔍 System Health &amp; Pipeline Test</h3>
+                <h3>🔍 System Health Check</h3>
 
                 <div class="test-status">
                     <span class="status-dot" id="overallDot"></span>
@@ -394,21 +389,21 @@
                     <button class="btn-secondary" id="runTestBtn" onclick="runTests()">
                         ▶ Run Health Check
                     </button>
-                    <button class="btn-secondary" id="testUploadBtn" onclick="switchTab('upload', document.querySelectorAll('.tab')[0])">
+                    <button class="btn-secondary" onclick="switchTab('upload', document.querySelectorAll('.tab')[0])">
                         📤 Go to Upload
                     </button>
                 </div>
 
                 <p class="hint">
-                    The health check verifies your Render environment is correctly wired:
-                    Bot API server reachable, bot authenticated, channel accessible, and BASE_URL set.
+                    Verifies your Render environment: Telegram API reachable, bot authenticated,
+                    channel accessible, and BASE_URL set.
                 </p>
             </div>
 
             <div class="test-panel" style="margin-top: 16px;">
                 <h3>📎 Test by File ID</h3>
                 <p class="hint" style="margin-top: 0; margin-bottom: 12px;">
-                    Already have a <code>file_id</code> from Telegram? Paste it here to generate a download link without re-uploading.
+                    Already have a <code>file_id</code>? Paste it here to generate a download link without re-uploading.
                 </p>
 
                 <input type="text" id="testFileId" placeholder="Paste Telegram file_id here">
