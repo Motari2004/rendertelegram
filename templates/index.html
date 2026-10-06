@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Video Uploader</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0088cc 0%, #005f8f 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 40px 20px;
+        }
+
+        .container {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 640px;
+            width: 100%;
+        }
+
+        .logo { text-align: center; margin-bottom: 24px; }
+        .logo svg { width: 56px; height: 56px; fill: #0088cc; }
+
+        h1 { text-align: center; color: #1a1a1a; font-size: 24px; margin-bottom: 8px; }
+        .subtitle { text-align: center; color: #666; font-size: 14px; margin-bottom: 32px; }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 24px;
+            background: #f1f5f9;
+            padding: 4px;
+            border-radius: 10px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            color: #64748b;
+            transition: all 0.2s;
+            border: none;
+            background: transparent;
+        }
+
+        .tab.active {
+            background: #fff;
+            color: #0088cc;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+        }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .drop-zone {
+            border: 2px dashed #cbd5e0;
+            border-radius: 12px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #f7fafc;
+            margin-bottom: 20px;
+        }
+
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: #0088cc;
+            background: #ebf8ff;
+        }
+
+        .drop-zone.has-file {
+            border-color: #38a169;
+            background: #f0fff4;
+        }
+
+        .drop-icon { font-size: 48px; margin-bottom: 12px; color: #0088cc; }
+        .drop-text { color: #4a5568; font-size: 15px; }
+        .drop-text strong { color: #0088cc; }
+
+        .file-info {
+            margin-top: 12px;
+            font-size: 13px;
+            color: #38a169;
+            font-weight: 600;
+            word-break: break-all;
+        }
+
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s;
+            margin-bottom: 16px;
+            resize: vertical;
+        }
+
+        input[type="text"]:focus, textarea:focus {
+            outline: none;
+            border-color: #0088cc;
+        }
+
+        button.primary {
+            width: 100%;
+            padding: 14px;
+            background: #0088cc;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button.primary:hover:not(:disabled) { background: #0077b3; }
+        button.primary:disabled { background: #cbd5e0; cursor: not-allowed; }
+
+        .progress { display: none; margin-top: 20px; }
+        .progress.active { display: block; }
+
+        .progress-bar {
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #0088cc, #00b4d8);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .progress-text {
+            text-align: center;
+            margin-top: 8px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .result {
+            display: none;
+            margin-top: 20px;
+            padding: 16px;
+            background: #f0fff4;
+            border: 2px solid #38a169;
+            border-radius: 10px;
+        }
+
+        .result.active { display: block; }
+
+        .result-label {
+            font-size: 14px;
+            color: #276749;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+
+        .link-label {
+            font-size: 13px;
+            color: #4a5568;
+            margin: 10px 0 6px;
+        }
+
+        .link-label.buffer { color: #2c5282; font-weight: 700; }
+
+        .link-box { display: flex; gap: 8px; }
+
+        .link-box input {
+            flex: 1;
+            margin-bottom: 0;
+            font-size: 12px;
+            background: #fff;
+        }
+
+        .copy-btn {
+            width: auto;
+            padding: 12px 20px;
+            font-size: 14px;
+            background: #38a169;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .copy-btn:hover { background: #2f855a; }
+
+        .error {
+            display: none;
+            margin-top: 20px;
+            padding: 14px;
+            background: #fff5f5;
+            border: 2px solid #e53e3e;
+            border-radius: 10px;
+            color: #c53030;
+            font-size: 14px;
+        }
+
+        .error.active { display: block; }
+
+        .hint {
+            margin-top: 16px;
+            font-size: 12px;
+            color: #718096;
+            line-height: 1.5;
+        }
+
+        /* Test panel specific */
+        .test-panel {
+            background: #f8fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .test-panel h3 {
+            font-size: 15px;
+            color: #1a1a1a;
+            margin-bottom: 16px;
+        }
+
+        .test-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            font-weight: 600;
+            background: #fff;
+            border: 2px solid #e2e8f0;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #cbd5e0;
+            flex-shrink: 0;
+        }
+
+        .status-dot.ok { background: #38a169; }
+        .status-dot.fail { background: #e53e3e; }
+        .status-dot.pending { background: #ed8936; animation: pulse 1s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .test-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 13px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .test-row:last-child { border-bottom: none; }
+        .test-row .key { color: #4a5568; }
+        .test-row .val { color: #1a1a1a; font-weight: 600; font-family: monospace; }
+        .test-row .val.ok { color: #38a169; }
+        .test-row .val.fail { color: #e53e3e; }
+
+        .test-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .btn-secondary {
+            flex: 1;
+            padding: 12px;
+            background: #fff;
+            color: #0088cc;
+            border: 2px solid #0088cc;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #ebf8ff;
+        }
+
+        .btn-secondary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.568 8.16l-2.04 9.6c-.15.72-.6.9-1.2.555l-3.3-2.43-1.59 1.53c-.18.18-.33.33-.66.33l.24-3.36 6.15-5.55c.27-.24-.06-.375-.42-.135L6.885 13.11 3.66 12.1c-.7-.225-.72-.72.15-1.065l11.85-4.57c.585-.21 1.095.135.9 1.095z"/>
+            </svg>
+        </div>
+
+        <h1>Telegram Video Uploader</h1>
+        <p class="subtitle">Upload a video, get a link for Buffer &amp; Zernio</p>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('upload', this)">📤 Upload</button>
+            <button class="tab" onclick="switchTab('test', this)">🧪 Test</button>
+        </div>
+
+        <!-- ============ UPLOAD TAB ============ -->
+        <div class="tab-content active" id="tab-upload">
+            <form id="uploadForm">
+                <div class="drop-zone" id="dropZone">
+                    <div class="drop-icon">📹</div>
+                    <div class="drop-text" id="dropText">
+                        <strong>Click to browse</strong> or drag &amp; drop
+                    </div>
+                    <div class="file-info" id="fileInfo"></div>
+                    <input type="file" id="fileInput" accept="video/*" hidden>
+                </div>
+
+                <input type="text" id="caption" placeholder="Caption (optional)">
+
+                <button type="submit" class="primary" id="submitBtn">Upload to Telegram</button>
+            </form>
+
+            <div class="progress" id="progress">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">Uploading...</div>
+            </div>
+
+            <div class="result" id="result">
+                <div class="result-label">✅ Upload complete!</div>
+
+                <p class="link-label buffer">🔗 Use this link for Buffer / Zernio:</p>
+                <div class="link-box">
+                    <input type="text" id="downloadLink" readonly>
+                    <button type="button" class="copy-btn" onclick="copyField('downloadLink', this)">Copy</button>
+                </div>
+
+                <p class="link-label">👁️ Telegram view (for reference):</p>
+                <div class="link-box">
+                    <input type="text" id="resultLink" readonly>
+                    <button type="button" class="copy-btn" onclick="copyField('resultLink', this)">Copy</button>
+                </div>
+
+                <p class="link-label">🆔 File ID (for testing or reuse):</p>
+                <div class="link-box">
+                    <input type="text" id="fileIdOut" readonly>
+                    <button type="button" class="copy-btn" onclick="copyField('fileIdOut', this)">Copy</button>
+                </div>
+
+                <p class="hint">
+                    ⚠️ Press <strong>Publish Now</strong> in Buffer / Zernio while Render is awake.
+                    The video lives permanently in Telegram.
+                </p>
+            </div>
+        </div>
+
+        <!-- ============ TEST TAB ============ -->
+        <div class="tab-content" id="tab-test">
+            <div class="test-panel">
+                <h3>🔍 System Health &amp; Pipeline Test</h3>
+
+                <div class="test-status">
+                    <span class="status-dot" id="overallDot"></span>
+                    <span id="overallText">Not tested yet</span>
+                </div>
+
+                <div id="testResults"></div>
+
+                <div class="test-actions">
+                    <button class="btn-secondary" id="runTestBtn" onclick="runTests()">
+                        ▶ Run Health Check
+                    </button>
+                    <button class="btn-secondary" id="testUploadBtn" onclick="switchTab('upload', document.querySelectorAll('.tab')[0])">
+                        📤 Go to Upload
+                    </button>
+                </div>
+
+                <p class="hint">
+                    The health check verifies your Render environment is correctly wired:
+                    Bot API server reachable, bot authenticated, channel accessible, and BASE_URL set.
+                </p>
+            </div>
+
+            <div class="test-panel" style="margin-top: 16px;">
+                <h3>📎 Test by File ID</h3>
+                <p class="hint" style="margin-top: 0; margin-bottom: 12px;">
+                    Already have a <code>file_id</code> from Telegram? Paste it here to generate a download link without re-uploading.
+                </p>
+
+                <input type="text" id="testFileId" placeholder="Paste Telegram file_id here">
+
+                <button class="btn-secondary" style="width: 100%;" onclick="lookupFileId()">
+                    🔗 Generate Download Link
+                </button>
+
+                <div id="lookupResult" style="margin-top: 12px;"></div>
+            </div>
+        </div>
+
+        <div class="error" id="error"></div>
+    </div>
+
+    <script>
+        // ---------- Tabs ----------
+        function switchTab(name, btn) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('tab-' + name).classList.add('active');
+        }
+
+        // ---------- Upload tab ----------
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const dropText = document.getElementById('dropText');
+        const fileInfo = document.getElementById('fileInfo');
+        const form = document.getElementById('uploadForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const progress = document.getElementById('progress');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const result = document.getElementById('result');
+        const resultLink = document.getElementById('resultLink');
+        const downloadLink = document.getElementById('downloadLink');
+        const fileIdOut = document.getElementById('fileIdOut');
+        const errorBox = document.getElementById('error');
+
+        let selectedFile = null;
+
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) handleFile(e.target.files[0]);
+        });
+
+        function handleFile(file) {
+            if (!file.type.startsWith('video/')) {
+                showError('Please select a video file');
+                return;
+            }
+            selectedFile = file;
+            dropZone.classList.add('has-file');
+            dropText.innerHTML = '✅ Video selected';
+            fileInfo.textContent = `${file.name} (${formatSize(file.size)})`;
+            hideError();
+            result.classList.remove('active');
+        }
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+        }
+
+        function showError(msg) {
+            errorBox.textContent = '⚠️ ' + msg;
+            errorBox.classList.add('active');
+        }
+        function hideError() { errorBox.classList.remove('active'); }
+
+        async function copyField(id, btn) {
+            const el = document.getElementById(id);
+            el.select();
+            try {
+                await navigator.clipboard.writeText(el.value);
+                const old = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = old, 1500);
+            } catch {
+                document.execCommand('copy');
+            }
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!selectedFile) { showError('Please select a video file first'); return; }
+
+            hideError();
+            result.classList.remove('active');
+            progress.classList.add('active');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Uploading...';
+            progressFill.style.width = '0%';
+            progressText.textContent = 'Uploading to server...';
+
+            const formData = new FormData();
+            formData.append('video', selectedFile);
+            formData.append('caption', document.getElementById('caption').value);
+
+            try {
+                const xhr = new XMLHttpRequest();
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const percent = (e.loaded / e.total) * 100;
+                        progressFill.style.width = percent + '%';
+                        progressText.textContent = percent < 100
+                            ? `Uploading: ${percent.toFixed(1)}%`
+                            : 'Sending to Telegram...';
+                    }
+                });
+
+                const response = await new Promise((resolve, reject) => {
+                    xhr.onload = () => {
+                        if (xhr.status >= 200 && xhr.status < 300) {
+                            resolve(JSON.parse(xhr.responseText));
+                        } else {
+                            try { reject(JSON.parse(xhr.responseText)); }
+                            catch { reject({ error: 'Upload failed' }); }
+                        }
+                    };
+                    xhr.onerror = () => reject({ error: 'Network error' });
+                    xhr.open('POST', '/upload');
+                    xhr.send(formData);
+                });
+
+                if (response.error) throw response;
+
+                progress.classList.remove('active');
+                result.classList.add('active');
+                resultLink.value = response.link;
+                downloadLink.value = response.download_link;
+                fileIdOut.value = response.file_id || '';
+
+            } catch (err) {
+                progress.classList.remove('active');
+                showError(err.error || 'Upload failed. Please try again.');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Upload to Telegram';
+            }
+        });
+
+        // ---------- Test tab ----------
+        async function runTests() {
+            const btn = document.getElementById('runTestBtn');
+            const dot = document.getElementById('overallDot');
+            const text = document.getElementById('overallText');
+            const results = document.getElementById('testResults');
+
+            btn.disabled = true;
+            btn.textContent = 'Running...';
+            dot.className = 'status-dot pending';
+            text.textContent = 'Running health check...';
+            results.innerHTML = '';
+
+            try {
+                const res = await fetch('/health');
+                const data = await res.json();
+
+                results.innerHTML = data.checks.map(c => `
+                    <div class="test-row">
+                        <span class="key">${c.name}</span>
+                        <span class="val ${c.ok ? 'ok' : 'fail'}">${c.ok ? '✓ ' + c.detail : '✗ ' + c.detail}</span>
+                    </div>
+                `).join('');
+
+                const allOk = data.checks.every(c => c.ok);
+                dot.className = 'status-dot ' + (allOk ? 'ok' : 'fail');
+                text.textContent = allOk ? 'All systems operational' : 'Some checks failed';
+
+            } catch (err) {
+                dot.className = 'status-dot fail';
+                text.textContent = 'Health check failed';
+                results.innerHTML = `<div class="test-row"><span class="key">Error</span><span class="val fail">${err.message}</span></div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '▶ Run Health Check';
+            }
+        }
+
+        async function lookupFileId() {
+            const fileId = document.getElementById('testFileId').value.trim();
+            const out = document.getElementById('lookupResult');
+
+            if (!fileId) {
+                out.innerHTML = '<div class="error active">Please paste a file_id</div>';
+                return;
+            }
+
+            out.innerHTML = '<div class="test-status"><span class="status-dot pending"></span><span>Looking up file...</span></div>';
+
+            try {
+                const res = await fetch('/lookup', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({file_id: fileId}),
+                });
+                const data = await res.json();
+
+                if (data.error) throw new Error(data.error);
+
+                out.innerHTML = `
+                    <div class="result active">
+                        <div class="result-label">✅ File found</div>
+                        <p class="link-label buffer">🔗 Download link:</p>
+                        <div class="link-box">
+                            <input type="text" id="lookupLink" value="${data.download_link}" readonly>
+                            <button type="button" class="copy-btn" onclick="copyField('lookupLink', this)">Copy</button>
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                out.innerHTML = `<div class="error active">⚠️ ${err.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>
