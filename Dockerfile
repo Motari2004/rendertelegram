@@ -2,13 +2,13 @@ FROM ghcr.io/lukaszraczylo/tdlib-telegram-bot-api-docker/telegram-api-server:1.0
 
 FROM python:3.12-slim
 
-# Install runtime libraries (no 'file' package needed)
+# Install runtime libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 zlib1g libreadline8 curl \
     && rm -rf /var/lib/apt/lists/*
 
-# ✅ Copy the binary from the official Docker image
-COPY --from=bot-api /usr/local/bin/telegram-bot-api /usr/local/bin/telegram-bot-api
+# ✅ FIXED: Correct path inside the image
+COPY --from=bot-api /telegram-bot-api/bin/telegram-bot-api /usr/local/bin/telegram-bot-api
 
 WORKDIR /app
 
