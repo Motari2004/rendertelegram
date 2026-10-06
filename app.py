@@ -1,6 +1,8 @@
 import os
+import time
 import uuid
 import asyncio
+import sqlite3
 import logging
 import requests
 from flask import Flask, render_template, request, jsonify
@@ -9,7 +11,7 @@ from telegram import Bot
 
 from config import (
     BOT_TOKEN, CHAT_ID, UPLOAD_FOLDER,
-    MAX_FILE_SIZE, BASE_URL,
+    MAX_FILE_SIZE, BASE_URL, DB_PATH,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -21,19 +23,77 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {'mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'm4v'}
 
-# Public Telegram API endpoints
 TG_API = "https://api.telegram.org"
 TG_FILE = "https://api.telegram.org/file"
 
 
+# ---------- Database ----------
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS uploads (
+            id TEXT PRIMARY KEY,
+            filename TEXT,
+            file_id TEXT,
+            message_id INTEGER,
+            telegram_link TEXT,
+            created_at REAL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def save_upload(uid, filename, file_id, message_id, telegram_link):
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "INSERT INTO uploads VALUES (?, ?, ?, ?, ?, ?)",
+        (uid, filename, file_id, message_id, telegram_link, time.time())
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_uploads():
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT id, filename, file_id, message_id, telegram_link, created_at "
+        "FROM uploads ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def get_upload_by_id(uid):
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT filename, file_id, message_id, telegram_link "
+        "FROM uploads WHERE id = ?",
+        (uid,)
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def delete_upload_record(uid):
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("DELETE FROM uploads WHERE id = ?", (uid,))
+    conn.commit()
+    conn.close()
+
+
+# Initialize DB at import time (runs under gunicorn too)
+init_db()
+
+
+# ---------- Helpers ----------
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-# ---------- Telegram ----------
 async def upload_to_telegram(file_path, caption=""):
     """Upload via the PUBLIC Telegram API — file_ids are permanent and portable."""
-    bot = Bot(token=BOT_TOKEN)  # No base_url → uses api.telegram.org
+    bot = Bot(token=BOT_TOKEN)
 
     async with bot:
         with open(file_path, 'rb') as video:
@@ -80,8 +140,9 @@ def upload():
     if not allowed_file(file.filename):
         return jsonify({'error': 'File type not allowed'}), 400
 
-    # Save temp file just for the upload
-    filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
+    uid = uuid.uuid4().hex
+    safe_name = secure_filename(file.filename)
+    filename = f"{uid}_{safe_name}"
     filepath = os.path.join(UPLOAD_FOLDER, filename)
     file.save(filepath)
 
@@ -92,12 +153,22 @@ def upload():
         if not file_id:
             raise Exception("Telegram did not return a file_id")
 
+        # Save to DB for the Manage tab
+        save_upload(
+            uid=uid,
+            filename=safe_name,
+            file_id=file_id,
+            message_id=result['message_id'],
+            telegram_link=result['link'],
+        )
+
         return jsonify({
             'success': True,
             'link': result['link'],
             'download_link': f"{BASE_URL}/stream/{file_id}",
             'file_id': file_id,
             'message_id': result['message_id'],
+            'uid': uid,
         })
 
     except Exception as e:
@@ -105,17 +176,14 @@ def upload():
         return jsonify({'error': str(e)}), 500
 
     finally:
-        # Delete temp file — Telegram holds the permanent copy
         if os.path.exists(filepath):
             os.remove(filepath)
 
 
 @app.route('/stream/<file_id>')
 def stream_file(file_id):
-    """Stream a file from Telegram via the PUBLIC cloud API.
-    file_ids here are permanent and survive Render restarts."""
+    """Stream a file from Telegram via the PUBLIC cloud API."""
     try:
-        # Step 1: resolve file_id → file_path
         url = f"{TG_API}/bot{BOT_TOKEN}/getFile"
         r = requests.get(url, params={'file_id': file_id}, timeout=15)
         result = r.json()
@@ -126,16 +194,16 @@ def stream_file(file_id):
             }), 404
 
         file_path = result['result']['file_path']
-
-        # Step 2: stream the file
         file_url = f"{TG_FILE}/bot{BOT_TOKEN}/{file_path}"
         req = requests.get(file_url, stream=True, timeout=120)
 
+        # Force video/mp4 so Buffer/Zernio accept it
         return app.response_class(
             req.iter_content(chunk_size=8192),
-            content_type=req.headers.get('Content-Type', 'video/mp4'),
+            content_type='video/mp4',
             headers={
                 'Content-Disposition': f'attachment; filename="{file_id}.mp4"',
+                'Accept-Ranges': 'bytes',
             }
         )
 
@@ -144,12 +212,62 @@ def stream_file(file_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/videos')
+def list_videos():
+    """List all tracked uploads for the Manage tab."""
+    rows = list_uploads()
+    videos = []
+    for uid, filename, file_id, message_id, telegram_link, created_at in rows:
+        videos.append({
+            'uid': uid,
+            'filename': filename,
+            'file_id': file_id,
+            'message_id': message_id,
+            'telegram_link': telegram_link,
+            'stream_link': f"{BASE_URL}/stream/{file_id}",
+            'created_at': created_at,
+        })
+    return jsonify({'videos': videos})
+
+
+@app.route('/videos/delete/<uid>', methods=['POST'])
+def delete_video(uid):
+    """Delete a video from Telegram and remove it from the DB."""
+    row = get_upload_by_id(uid)
+    if not row:
+        return jsonify({'error': 'Upload not found'}), 404
+
+    filename, file_id, message_id, telegram_link = row
+
+    try:
+        url = f"{TG_API}/bot{BOT_TOKEN}/deleteMessage"
+        r = requests.post(url, data={
+            'chat_id': CHAT_ID,
+            'message_id': message_id,
+        }, timeout=15)
+        result = r.json()
+
+        if not result.get('ok'):
+            logger.warning(f"Telegram delete failed: {result.get('description')}")
+
+        delete_upload_record(uid)
+
+        return jsonify({
+            'success': True,
+            'deleted_message_id': message_id,
+            'telegram_deleted': result.get('ok', False),
+        })
+
+    except Exception as e:
+        logger.exception("Delete failed")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/health')
 def health():
     """Health check endpoint for the test tab."""
     checks = []
 
-    # 1. Telegram cloud API reachable?
     try:
         url = f"{TG_API}/bot{BOT_TOKEN}/getMe"
         r = requests.get(url, timeout=5)
@@ -167,13 +285,8 @@ def health():
                 'detail': data.get('description', 'Unknown error')
             })
     except Exception as e:
-        checks.append({
-            'name': 'Telegram API',
-            'ok': False,
-            'detail': str(e)[:60]
-        })
+        checks.append({'name': 'Telegram API', 'ok': False, 'detail': str(e)[:60]})
 
-    # 2. Channel accessible?
     try:
         url = f"{TG_API}/bot{BOT_TOKEN}/getChat"
         r = requests.get(url, params={'chat_id': CHAT_ID}, timeout=5)
@@ -191,43 +304,21 @@ def health():
                 'detail': data.get('description', 'Not reachable')
             })
     except Exception as e:
-        checks.append({
-            'name': 'Channel access',
-            'ok': False,
-            'detail': str(e)[:60]
-        })
+        checks.append({'name': 'Channel access', 'ok': False, 'detail': str(e)[:60]})
 
-    # 3. BASE_URL configured?
     if BASE_URL and 'localhost' not in BASE_URL:
-        checks.append({
-            'name': 'BASE_URL',
-            'ok': True,
-            'detail': BASE_URL
-        })
+        checks.append({'name': 'BASE_URL', 'ok': True, 'detail': BASE_URL})
     else:
-        checks.append({
-            'name': 'BASE_URL',
-            'ok': False,
-            'detail': 'Not set to a public URL'
-        })
+        checks.append({'name': 'BASE_URL', 'ok': False, 'detail': 'Not set to a public URL'})
 
-    # 4. Upload folder writable?
     try:
         test_file = os.path.join(UPLOAD_FOLDER, '.writetest')
         with open(test_file, 'w') as f:
             f.write('ok')
         os.remove(test_file)
-        checks.append({
-            'name': 'Upload folder',
-            'ok': True,
-            'detail': UPLOAD_FOLDER
-        })
+        checks.append({'name': 'Upload folder', 'ok': True, 'detail': UPLOAD_FOLDER})
     except Exception as e:
-        checks.append({
-            'name': 'Upload folder',
-            'ok': False,
-            'detail': str(e)[:60]
-        })
+        checks.append({'name': 'Upload folder', 'ok': False, 'detail': str(e)[:60]})
 
     return jsonify({'checks': checks})
 

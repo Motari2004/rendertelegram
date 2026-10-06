@@ -97,7 +97,7 @@
             word-break: break-all;
         }
 
-        input[type="text"], textarea {
+        input[type="text"] {
             width: 100%;
             padding: 12px 16px;
             border: 2px solid #e2e8f0;
@@ -106,10 +106,9 @@
             font-family: inherit;
             transition: border-color 0.2s;
             margin-bottom: 16px;
-            resize: vertical;
         }
 
-        input[type="text"]:focus, textarea:focus {
+        input[type="text"]:focus {
             outline: none;
             border-color: #0088cc;
         }
@@ -224,15 +223,14 @@
             line-height: 1.5;
         }
 
-        /* Test panel */
-        .test-panel {
+        .panel {
             background: #f8fafc;
             border: 2px solid #e2e8f0;
             border-radius: 12px;
             padding: 20px;
         }
 
-        .test-panel h3 {
+        .panel h3 {
             font-size: 15px;
             color: #1a1a1a;
             margin-bottom: 16px;
@@ -303,6 +301,57 @@
 
         .btn-secondary:hover:not(:disabled) { background: #ebf8ff; }
         .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .video-item {
+            background: #fff;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+
+        .video-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            gap: 10px;
+        }
+
+        .video-name {
+            font-size: 13px;
+            font-weight: 700;
+            color: #1a1a1a;
+            word-break: break-all;
+        }
+
+        .video-id {
+            font-size: 11px;
+            color: #718096;
+            font-family: monospace;
+            flex-shrink: 0;
+        }
+
+        .btn-delete {
+            padding: 12px 16px;
+            background: #e53e3e;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .btn-delete:hover { background: #c53030; }
+        .btn-delete:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .empty-state {
+            text-align: center;
+            padding: 30px 10px;
+            color: #718096;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
@@ -318,10 +367,11 @@
 
         <div class="tabs">
             <button class="tab active" onclick="switchTab('upload', this)">📤 Upload</button>
+            <button class="tab" onclick="switchTab('manage', this)">🗂️ Manage</button>
             <button class="tab" onclick="switchTab('test', this)">🧪 Test</button>
         </div>
 
-        <!-- ============ UPLOAD TAB ============ -->
+        <!-- UPLOAD TAB -->
         <div class="tab-content active" id="tab-upload">
             <form id="uploadForm">
                 <div class="drop-zone" id="dropZone">
@@ -367,15 +417,31 @@
                 </div>
 
                 <p class="hint">
-                    ⚠️ This link is <strong>permanent</strong> — it fetches the video from Telegram
-                    on demand. Press <strong>Publish Now</strong> in Buffer / Zernio when ready.
+                    ⚠️ Link is permanent — fetched from Telegram on demand. Press
+                    <strong>Publish Now</strong> in Buffer / Zernio when ready.
                 </p>
             </div>
         </div>
 
-        <!-- ============ TEST TAB ============ -->
+        <!-- MANAGE TAB -->
+        <div class="tab-content" id="tab-manage">
+            <div class="panel">
+                <h3>🗂️ Uploaded Videos</h3>
+                <p class="hint" style="margin-top: 0; margin-bottom: 12px;">
+                    Videos uploaded through this app. Copy a link or delete from Telegram.
+                </p>
+
+                <div class="test-actions" style="margin-bottom: 16px;">
+                    <button class="btn-secondary" onclick="loadVideos()">🔄 Refresh List</button>
+                </div>
+
+                <div id="videoList"></div>
+            </div>
+        </div>
+
+        <!-- TEST TAB -->
         <div class="tab-content" id="tab-test">
-            <div class="test-panel">
+            <div class="panel">
                 <h3>🔍 System Health Check</h3>
 
                 <div class="test-status">
@@ -395,15 +461,14 @@
                 </div>
 
                 <p class="hint">
-                    Verifies your Render environment: Telegram API reachable, bot authenticated,
-                    channel accessible, and BASE_URL set.
+                    Verifies Telegram API reachable, bot authenticated, channel accessible, and BASE_URL set.
                 </p>
             </div>
 
-            <div class="test-panel" style="margin-top: 16px;">
+            <div class="panel" style="margin-top: 16px;">
                 <h3>📎 Test by File ID</h3>
                 <p class="hint" style="margin-top: 0; margin-bottom: 12px;">
-                    Already have a <code>file_id</code>? Paste it here to generate a download link without re-uploading.
+                    Already have a <code>file_id</code>? Paste it here to generate a download link.
                 </p>
 
                 <input type="text" id="testFileId" placeholder="Paste Telegram file_id here">
@@ -420,12 +485,12 @@
     </div>
 
     <script>
-        // ---------- Tabs ----------
         function switchTab(name, btn) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             btn.classList.add('active');
             document.getElementById('tab-' + name).classList.add('active');
+            if (name === 'manage') loadVideos();
         }
 
         // ---------- Upload tab ----------
@@ -558,6 +623,70 @@
                 submitBtn.textContent = 'Upload to Telegram';
             }
         });
+
+        // ---------- Manage tab ----------
+        async function loadVideos() {
+            const list = document.getElementById('videoList');
+            list.innerHTML = '<div class="test-status"><span class="status-dot pending"></span><span>Loading...</span></div>';
+
+            try {
+                const res = await fetch('/videos');
+                const data = await res.json();
+
+                if (!data.videos || data.videos.length === 0) {
+                    list.innerHTML = '<div class="empty-state">No videos uploaded yet.</div>';
+                    return;
+                }
+
+                list.innerHTML = data.videos.map(v => `
+                    <div class="video-item">
+                        <div class="video-header">
+                            <span class="video-name">${v.filename}</span>
+                            <span class="video-id">#${v.message_id}</span>
+                        </div>
+                        <div class="link-box">
+                            <input type="text" value="${v.stream_link}" readonly>
+                            <button type="button" class="copy-btn" onclick="copyValue(this, '${v.stream_link}')">Copy</button>
+                            <button type="button" class="btn-delete" onclick="deleteVideo('${v.uid}', this)">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+
+            } catch (err) {
+                list.innerHTML = `<div class="error active">Failed to load: ${err.message}</div>`;
+            }
+        }
+
+        async function copyValue(btn, value) {
+            try {
+                await navigator.clipboard.writeText(value);
+                const old = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = old, 1500);
+            } catch {
+                const input = btn.previousElementSibling;
+                input.select();
+                document.execCommand('copy');
+            }
+        }
+
+        async function deleteVideo(uid, btn) {
+            if (!confirm('Delete this video from Telegram? Cannot be undone.')) return;
+
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+
+            try {
+                const res = await fetch(`/videos/delete/${uid}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.error) throw new Error(data.error);
+                loadVideos();
+            } catch (err) {
+                alert('Delete failed: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = 'Delete';
+            }
+        }
 
         // ---------- Test tab ----------
         async function runTests() {
