@@ -1,14 +1,8 @@
-FROM ghcr.io/lukaszraczylo/tdlib-telegram-bot-api-docker/telegram-api-server:1.0.331 AS bot-api
-
 FROM python:3.12-slim
 
-# Install runtime libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 zlib1g libreadline8 curl \
+    curl \
     && rm -rf /var/lib/apt/lists/*
-
-# ✅ FIXED: Correct path inside the image
-COPY --from=bot-api /telegram-bot-api/bin/telegram-bot-api /usr/local/bin/telegram-bot-api
 
 WORKDIR /app
 
@@ -17,11 +11,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p /app/uploads /data/telegram-bot-api
-
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
+RUN mkdir -p /app/uploads
 
 EXPOSE 10000
 
-CMD ["/start.sh"]
+CMD ["gunicorn", "--workers", "2", "--timeout", "600", "--bind", "0.0.0.0:10000", "app:app"]
