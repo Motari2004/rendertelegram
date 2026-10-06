@@ -1,18 +1,15 @@
 import os
 import uuid
-import time
 import asyncio
-import sqlite3
-import threading
 import logging
 import requests
-from flask import Flask, render_template, request, jsonify, send_file, abort
+from flask import Flask, render_template, request, jsonify
 from werkzeug.utils import secure_filename
 from telegram import Bot
 
 from config import (
     BOT_TOKEN, CHAT_ID, BOT_API_URL, UPLOAD_FOLDER,
-    MAX_FILE_SIZE, BASE_URL, CLEANUP_HOURS, DB_PATH,
+    MAX_FILE_SIZE, BASE_URL,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -25,74 +22,6 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 ALLOWED_EXTENSIONS = {'mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'm4v'}
 
 
-# ---------- Database ----------
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS uploads (
-            id TEXT PRIMARY KEY,
-            filename TEXT,
-            path TEXT,
-            telegram_link TEXT,
-            file_id TEXT,
-            message_id INTEGER,
-            created_at REAL
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-
-def save_upload(uid, filename, path, telegram_link, file_id, message_id):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "INSERT INTO uploads VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (uid, filename, path, telegram_link, file_id, message_id, time.time())
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_upload(uid):
-    conn = sqlite3.connect(DB_PATH)
-    row = conn.execute(
-        "SELECT filename, path, telegram_link FROM uploads WHERE id = ?", (uid,)
-    ).fetchone()
-    conn.close()
-    return row
-
-
-def get_upload_by_message(message_id):
-    conn = sqlite3.connect(DB_PATH)
-    row = conn.execute(
-        "SELECT id, filename, telegram_link FROM uploads WHERE message_id = ?",
-        (message_id,)
-    ).fetchone()
-    conn.close()
-    return row
-
-
-def cleanup_old_uploads(max_age_hours):
-    """Delete files + DB rows older than max_age_hours."""
-    while True:
-        cutoff = time.time() - (max_age_hours * 3600)
-        conn = sqlite3.connect(DB_PATH)
-        rows = conn.execute(
-            "SELECT id, path FROM uploads WHERE created_at < ?", (cutoff,)
-        ).fetchall()
-        for uid, path in rows:
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-                conn.execute("DELETE FROM uploads WHERE id = ?", (uid,))
-                logger.info(f"Cleaned up {uid}")
-            except Exception as e:
-                logger.warning(f"Cleanup failed for {uid}: {e}")
-        conn.commit()
-        conn.close()
-        time.sleep(3600)
-
-
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -100,7 +29,7 @@ def allowed_file(filename):
 # ---------- Telegram ----------
 async def upload_to_telegram(file_path, caption=""):
     """Upload via the LOCAL Bot API server (2GB limit, not 20MB)."""
-    # BOT_API_URL already includes /bot suffix — python-telegram-bot appends token
+    # BOT_API_URL includes /bot suffix — python-telegram-bot appends the token
     bot = Bot(token=BOT_TOKEN, base_url=BOT_API_URL)
 
     async with bot:
@@ -148,63 +77,34 @@ def upload():
     if not allowed_file(file.filename):
         return jsonify({'error': 'File type not allowed'}), 400
 
-    uid = uuid.uuid4().hex
-    safe_name = secure_filename(file.filename)
-    filename = f"{uid}_{safe_name}"
+    # Save temp file just for the upload
+    filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
     filepath = os.path.join(UPLOAD_FOLDER, filename)
     file.save(filepath)
 
     try:
         result = asyncio.run(upload_to_telegram(filepath, caption))
+        file_id = result['file_id']
 
-        save_upload(
-            uid=uid,
-            filename=safe_name,
-            path=filepath,
-            telegram_link=result['link'],
-            file_id=result['file_id'],
-            message_id=result['message_id'],
-        )
+        if not file_id:
+            raise Exception("Telegram did not return a file_id")
 
         return jsonify({
             'success': True,
             'link': result['link'],
-            'download_link': f"{BASE_URL}/download/{uid}",
-            'file_id': result['file_id'],
+            'download_link': f"{BASE_URL}/stream/{file_id}",
+            'file_id': file_id,
             'message_id': result['message_id'],
         })
 
     except Exception as e:
         logger.exception("Upload failed")
-        if os.path.exists(filepath):
-            os.remove(filepath)
         return jsonify({'error': str(e)}), 500
 
-
-@app.route('/download/<uid>')
-def download(uid):
-    """Serve the video file while the server is awake."""
-    row = get_upload(uid)
-    if not row:
-        abort(404)
-    filename, path, _ = row
-    if not os.path.exists(path):
-        abort(404)
-    return send_file(path, as_attachment=True, download_name=filename)
-
-
-@app.route('/link/<int:message_id>')
-def get_link_by_message(message_id):
-    """Look up a download link using the Telegram message ID."""
-    row = get_upload_by_message(message_id)
-    if not row:
-        return jsonify({'error': 'No upload found for that message ID'}), 404
-    uid, filename, telegram_link = row
-    return jsonify({
-        'download_link': f"{BASE_URL}/download/{uid}",
-        'telegram_link': telegram_link,
-        'filename': filename,
-    })
+    finally:
+        # Delete temp file — Telegram holds the permanent copy
+        if os.path.exists(filepath):
+            os.remove(filepath)
 
 
 @app.route('/health')
@@ -213,8 +113,6 @@ def health():
     checks = []
 
     # 1. Local Bot API server reachable?
-    # BOT_API_URL already ends with /bot, so URL is:
-    #   http://localhost:8081/bot<TOKEN>/getMe
     try:
         url = f"{BOT_API_URL}{BOT_TOKEN}/getMe"
         r = requests.get(url, timeout=5)
@@ -345,8 +243,10 @@ def stream_file(file_id):
         file_path = result['result']['file_path']
 
         # Local Bot API server serves files at:
-        #   http://localhost:8081/file/bot<TOKEN>/<file_path>
-        file_url = f"{BOT_API_URL.rsplit('/bot', 1)[0]}/file/bot{BOT_TOKEN}/{file_path}"
+        #   http://<host>/file/bot<TOKEN>/<file_path>
+        # BOT_API_URL looks like "http://host:8081/bot" — strip the trailing "/bot"
+        base = BOT_API_URL.rsplit('/bot', 1)[0]
+        file_url = f"{base}/file/bot{BOT_TOKEN}/{file_path}"
 
         req = requests.get(file_url, stream=True, timeout=60)
         return app.response_class(
@@ -368,8 +268,4 @@ def too_large(e):
 
 
 if __name__ == '__main__':
-    init_db()
-    threading.Thread(
-        target=cleanup_old_uploads, args=(CLEANUP_HOURS,), daemon=True
-    ).start()
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
