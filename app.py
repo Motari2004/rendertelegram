@@ -8,7 +8,7 @@ from werkzeug.utils import secure_filename
 from telegram import Bot
 
 from config import (
-    BOT_TOKEN, CHAT_ID, BOT_API_URL, UPLOAD_FOLDER,
+    BOT_TOKEN, CHAT_ID, UPLOAD_FOLDER,
     MAX_FILE_SIZE, BASE_URL,
 )
 
@@ -21,6 +21,10 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {'mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'm4v'}
 
+# Public Telegram API endpoints
+TG_API = "https://api.telegram.org"
+TG_FILE = "https://api.telegram.org/file"
+
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -28,9 +32,8 @@ def allowed_file(filename):
 
 # ---------- Telegram ----------
 async def upload_to_telegram(file_path, caption=""):
-    """Upload via the LOCAL Bot API server (2GB limit, not 20MB)."""
-    # BOT_API_URL includes /bot suffix — python-telegram-bot appends the token
-    bot = Bot(token=BOT_TOKEN, base_url=BOT_API_URL)
+    """Upload via the PUBLIC Telegram API — file_ids are permanent and portable."""
+    bot = Bot(token=BOT_TOKEN)  # No base_url → uses api.telegram.org
 
     async with bot:
         with open(file_path, 'rb') as video:
@@ -107,38 +110,72 @@ def upload():
             os.remove(filepath)
 
 
+@app.route('/stream/<file_id>')
+def stream_file(file_id):
+    """Stream a file from Telegram via the PUBLIC cloud API.
+    file_ids here are permanent and survive Render restarts."""
+    try:
+        # Step 1: resolve file_id → file_path
+        url = f"{TG_API}/bot{BOT_TOKEN}/getFile"
+        r = requests.get(url, params={'file_id': file_id}, timeout=15)
+        result = r.json()
+
+        if not result.get('ok'):
+            return jsonify({
+                'error': result.get('description', 'File not found')
+            }), 404
+
+        file_path = result['result']['file_path']
+
+        # Step 2: stream the file
+        file_url = f"{TG_FILE}/bot{BOT_TOKEN}/{file_path}"
+        req = requests.get(file_url, stream=True, timeout=120)
+
+        return app.response_class(
+            req.iter_content(chunk_size=8192),
+            content_type=req.headers.get('Content-Type', 'video/mp4'),
+            headers={
+                'Content-Disposition': f'attachment; filename="{file_id}.mp4"',
+            }
+        )
+
+    except Exception as e:
+        logger.exception("Stream failed")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/health')
 def health():
     """Health check endpoint for the test tab."""
     checks = []
 
-    # 1. Local Bot API server reachable?
+    # 1. Telegram cloud API reachable?
     try:
-        url = f"{BOT_API_URL}{BOT_TOKEN}/getMe"
+        url = f"{TG_API}/bot{BOT_TOKEN}/getMe"
         r = requests.get(url, timeout=5)
         data = r.json()
         if data.get('ok'):
             checks.append({
-                'name': 'Bot API server',
+                'name': 'Telegram API',
                 'ok': True,
                 'detail': f"@{data['result']['username']}"
             })
         else:
             checks.append({
-                'name': 'Bot API server',
+                'name': 'Telegram API',
                 'ok': False,
                 'detail': data.get('description', 'Unknown error')
             })
     except Exception as e:
         checks.append({
-            'name': 'Bot API server',
+            'name': 'Telegram API',
             'ok': False,
             'detail': str(e)[:60]
         })
 
     # 2. Channel accessible?
     try:
-        url = f"{BOT_API_URL}{BOT_TOKEN}/getChat"
+        url = f"{TG_API}/bot{BOT_TOKEN}/getChat"
         r = requests.get(url, params={'chat_id': CHAT_ID}, timeout=5)
         data = r.json()
         if data.get('ok'):
@@ -205,8 +242,7 @@ def lookup_file():
         return jsonify({'error': 'No file_id provided'}), 400
 
     try:
-        # BOT_API_URL includes /bot suffix
-        url = f"{BOT_API_URL}{BOT_TOKEN}/getFile"
+        url = f"{TG_API}/bot{BOT_TOKEN}/getFile"
         r = requests.get(url, params={'file_id': file_id}, timeout=15)
         result = r.json()
 
@@ -215,11 +251,8 @@ def lookup_file():
                 'error': result.get('description', 'File lookup failed')
             }), 400
 
-        file_path = result['result']['file_path']
-
         return jsonify({
             'download_link': f"{BASE_URL}/stream/{file_id}",
-            'file_path': file_path,
             'file_size': result['result'].get('file_size'),
         })
 
@@ -228,43 +261,11 @@ def lookup_file():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/stream/<file_id>')
-def stream_file(file_id):
-    """Stream a file from Telegram via the local Bot API server."""
-    try:
-        # BOT_API_URL includes /bot suffix
-        url = f"{BOT_API_URL}{BOT_TOKEN}/getFile"
-        r = requests.get(url, params={'file_id': file_id}, timeout=15)
-        result = r.json()
-
-        if not result.get('ok'):
-            abort(404)
-
-        file_path = result['result']['file_path']
-
-        # Local Bot API server serves files at:
-        #   http://<host>/file/bot<TOKEN>/<file_path>
-        # BOT_API_URL looks like "http://host:8081/bot" — strip the trailing "/bot"
-        base = BOT_API_URL.rsplit('/bot', 1)[0]
-        file_url = f"{base}/file/bot{BOT_TOKEN}/{file_path}"
-
-        req = requests.get(file_url, stream=True, timeout=60)
-        return app.response_class(
-            req.iter_content(chunk_size=8192),
-            content_type=req.headers.get('Content-Type', 'video/mp4'),
-            headers={
-                'Content-Disposition': f'attachment; filename="{file_id}.mp4"',
-            }
-        )
-
-    except Exception as e:
-        logger.exception("Stream failed")
-        abort(500)
-
-
 @app.errorhandler(413)
 def too_large(e):
-    return jsonify({'error': 'File too large. Max size is 2GB.'}), 413
+    return jsonify({
+        'error': 'File too large. Max size is 20MB (Telegram cloud API limit).'
+    }), 413
 
 
 if __name__ == '__main__':
