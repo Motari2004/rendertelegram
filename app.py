@@ -100,6 +100,7 @@ def allowed_file(filename):
 # ---------- Telegram ----------
 async def upload_to_telegram(file_path, caption=""):
     """Upload via the LOCAL Bot API server (2GB limit, not 20MB)."""
+    # BOT_API_URL already includes /bot suffix — python-telegram-bot appends token
     bot = Bot(token=BOT_TOKEN, base_url=BOT_API_URL)
 
     async with bot:
@@ -212,8 +213,11 @@ def health():
     checks = []
 
     # 1. Local Bot API server reachable?
+    # BOT_API_URL already ends with /bot, so URL is:
+    #   http://localhost:8081/bot<TOKEN>/getMe
     try:
-        r = requests.get(f"{BOT_API_URL}/bot{BOT_TOKEN}/getMe", timeout=5)
+        url = f"{BOT_API_URL}{BOT_TOKEN}/getMe"
+        r = requests.get(url, timeout=5)
         data = r.json()
         if data.get('ok'):
             checks.append({
@@ -236,11 +240,8 @@ def health():
 
     # 2. Channel accessible?
     try:
-        r = requests.get(
-            f"{BOT_API_URL}/bot{BOT_TOKEN}/getChat",
-            params={'chat_id': CHAT_ID},
-            timeout=5
-        )
+        url = f"{BOT_API_URL}{BOT_TOKEN}/getChat"
+        r = requests.get(url, params={'chat_id': CHAT_ID}, timeout=5)
         data = r.json()
         if data.get('ok'):
             checks.append({
@@ -306,11 +307,9 @@ def lookup_file():
         return jsonify({'error': 'No file_id provided'}), 400
 
     try:
-        r = requests.get(
-            f"{BOT_API_URL}/bot{BOT_TOKEN}/getFile",
-            params={'file_id': file_id},
-            timeout=15
-        )
+        # BOT_API_URL includes /bot suffix
+        url = f"{BOT_API_URL}{BOT_TOKEN}/getFile"
+        r = requests.get(url, params={'file_id': file_id}, timeout=15)
         result = r.json()
 
         if not result.get('ok'):
@@ -335,18 +334,19 @@ def lookup_file():
 def stream_file(file_id):
     """Stream a file from Telegram via the local Bot API server."""
     try:
-        r = requests.get(
-            f"{BOT_API_URL}/bot{BOT_TOKEN}/getFile",
-            params={'file_id': file_id},
-            timeout=15
-        )
+        # BOT_API_URL includes /bot suffix
+        url = f"{BOT_API_URL}{BOT_TOKEN}/getFile"
+        r = requests.get(url, params={'file_id': file_id}, timeout=15)
         result = r.json()
 
         if not result.get('ok'):
             abort(404)
 
         file_path = result['result']['file_path']
-        file_url = f"{BOT_API_URL}/file/bot{BOT_TOKEN}/{file_path}"
+
+        # Local Bot API server serves files at:
+        #   http://localhost:8081/file/bot<TOKEN>/<file_path>
+        file_url = f"{BOT_API_URL.rsplit('/bot', 1)[0]}/file/bot{BOT_TOKEN}/{file_path}"
 
         req = requests.get(file_url, stream=True, timeout=60)
         return app.response_class(
